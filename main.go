@@ -4,9 +4,11 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/csv"
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -32,6 +34,7 @@ type Result struct {
 
 var (
 	m *brutemachine.Machine
+	w *csv.Writer
 
 	g = color.New(color.FgGreen)
 	y = color.New(color.FgYellow)
@@ -45,9 +48,17 @@ var (
 	searchcname = flag.Bool("cname", false, "Show CNAME results")
 	searcha     = flag.Bool("a", true, "Show A results")
 	forceTld    = flag.Bool("force-tld", true, "Extract top level from provided domain")
+	output      = flag.String("output", "/tmp/result.csv", "Output file to store the results")
 
 	wildcard []string
 )
+
+//Checkiferr function as a generic check for error function
+func Checkiferr(e error) {
+	if e != nil {
+		panic(e)
+	}
+}
 
 // Lookup a random host to determine if a wildcard A record exists
 // Adapted from https://github.com/jrozner/sonar/blob/master/wildcard.go
@@ -118,21 +129,33 @@ func OnResult(res interface{}) {
 		return
 	}
 
-	g.Printf("%25s", result.hostname)
+	var strA []string
+	strA = append(strA, result.hostname)
+
 	if *searcha {
-		fmt.Printf(" : A %v", result.addrs)
+		strA = append(strA, strings.Join(result.addrs, ";"))
 	}
 	if *searchtxt {
-		fmt.Printf(" : TXT %v", result.txts)
+		strA = append(strA, strings.Join(result.txts, ";"))
 	}
 	if *searchcname {
-		fmt.Printf(" : CNAME %v", result.cname)
+		strA = append(strA, result.cname)
 	}
-	fmt.Printf("\n")
+
+	if err := w.Write(strA); err != nil {
+		log.Fatalln("error writing record to csv:", err)
+	}
+
 }
 
 func main() {
 	setup()
+
+	outputFile, err := os.Create(*output)
+	Checkiferr(err)
+	defer outputFile.Close()
+
+	w = csv.NewWriter(outputFile)
 
 	m = brutemachine.New(*consumers, *wordlist, DoRequest, OnResult)
 	if err := m.Start(); err != nil {
@@ -142,6 +165,12 @@ func main() {
 	m.Wait()
 
 	g.Println("\nDONE")
+
+	w.Flush()
+
+	if err := w.Error(); err != nil {
+		log.Fatal(err)
+	}
 
 	printStats()
 }
